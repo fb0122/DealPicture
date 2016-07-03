@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">RunWork</string>
+    <string name="btn_add">上传照片</string>
+    <string name="btn_get">获取照片</string>
 </resources>

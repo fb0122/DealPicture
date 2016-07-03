@@ -1,6 +1,6 @@
 package com.example.fb0122.runwork;
 
-import android.app.Activity;
+import android.app.ProgressDialog;
 import android.content.ContentUris;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -12,6 +12,7 @@ import android.graphics.Matrix;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
@@ -20,29 +21,25 @@ import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
-import android.os.Bundle;
+import android.support.v7.widget.Toolbar;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.AdapterView;
+import android.widget.AdapterView.OnItemClickListener;
 import android.widget.BaseAdapter;
 import android.widget.Button;
-import android.widget.Gallery;
 import android.widget.ImageView;
 import android.widget.ListView;
 import android.widget.Toast;
 
-import com.android.internal.http.multipart.MultipartEntity;
-
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
-import org.apache.http.NameValuePair;
 import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.HttpDelete;
 import org.apache.http.client.methods.HttpGet;
-import org.apache.http.client.methods.HttpPost;
 import org.apache.http.impl.client.DefaultHttpClient;
-import org.apache.http.protocol.BasicHttpContext;
-import org.apache.http.protocol.HttpContext;
 import org.apache.http.util.EntityUtils;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -60,12 +57,14 @@ import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLConnection;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-public class MainActivity extends AppCompatActivity   {
+public class MainActivity extends AppCompatActivity implements OnItemClickListener {
     private final static String TAG = "MainActivity";
 
     private static Context context;
@@ -73,11 +72,20 @@ public class MainActivity extends AppCompatActivity   {
     Button btn_get;
     String bmPath = null;
     String post = "http://nervending.com/exam/10001/photo";
+    String url = "http://nervending.com/exam/10001/photos";
     public final static int connectTimeOut = 10 * 1000;
     private int readTimeOut = 10 * 1000;
     ListView lv_photo;
     MyAdapter adapter;
     MyHandler handler = new MyHandler(Looper.myLooper());
+    HashSet<String> urls_set = new HashSet<>();
+    HashSet<Integer> id_set = new HashSet<>();
+    ArrayList<Integer> id_list = new ArrayList<>();
+    List<String> urls = new ArrayList<>();
+    ProgressDialog progressDialog;
+    boolean isMore = true;
+    String de_photo = "";
+    int de_position = 0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -85,6 +93,11 @@ public class MainActivity extends AppCompatActivity   {
         setContentView(R.layout.activity_main);
         context = getApplicationContext();
         initView();
+
+        Toolbar toolbar = (Toolbar)findViewById(R.id.toolbar);
+        toolbar.setTitle("图片展示");
+        toolbar.setTitleTextColor(getResources().getColor(android.R.color.white));
+        setSupportActionBar(toolbar);
 
         btn_add.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -99,10 +112,11 @@ public class MainActivity extends AppCompatActivity   {
         btn_get.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                new Thread(new myThread()).start();
+                progressDialog = ProgressDialog.show(MainActivity.this,"提示","正在获取...",true);
+                new Thread(new myThread(url)).start();
             }
         });
-//        lv_photo.setAdapter(adapter);
+        lv_photo.setOnItemClickListener(this);
     }
 
     private void initView() {
@@ -122,6 +136,7 @@ public class MainActivity extends AppCompatActivity   {
             Log.e(TAG,"uri = " + uri);
             bmPath = getPath(context,uri);
             Log.e(TAG,"bmPath = " + bmPath);
+            progressDialog = ProgressDialog.show(MainActivity.this,"提示","正在上传...",true);
             new Thread(new Runnable() {
                 @Override
                 public void run() {
@@ -131,7 +146,7 @@ public class MainActivity extends AppCompatActivity   {
         }
     }
 
-    //android4.4以上,因为uri在android4.4以前与之后不同
+    //android4.4以上根据uri获取路径的方法,因为uri在android4.4以前与之后不同
     public static String getPath(final Context context, final Uri uri) {
 
         final boolean isKitKat = Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT;
@@ -309,19 +324,77 @@ public class MainActivity extends AppCompatActivity   {
         return bitmap;
     }
 
+    @Override
+    public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+
+        if (urls.size() == 0){
+            urls.addAll(urls_set);
+            Collections.sort(urls);
+        }
+        id_list.addAll(id_set);
+        String pattern = "\\d+";
+        Pattern r = Pattern.compile(pattern);
+        Matcher matcher = r.matcher(urls.get(position));
+        if (matcher.find()) {
+            Log.e(TAG, "matcher = " + matcher.group(0));
+            de_photo = post + "/" + matcher.group(0);
+        }
+        de_position = position;
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("提示");
+        builder.setMessage("确定要删除这张照片吗？");
+        builder.setPositiveButton("确定", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                new Thread(new Runnable() {
+                    Message msg = handler.obtainMessage();
+                    @Override
+                    public void run() {
+                        HttpClient client = new DefaultHttpClient();
+                        HttpDelete delete = new HttpDelete(de_photo);
+                        try {
+                            HttpResponse response = client.execute(delete);
+                            if (response.getStatusLine().getStatusCode() == 200){
+                                HttpEntity entity = response.getEntity();
+                                String result = EntityUtils.toString(entity,"gbk");
+                                Log.e(TAG,"result = " + result);
+                                JSONObject jsonObject = new JSONObject(result);
+                                if (jsonObject.get("msg").equals("succ")){
+                                    msg.what = Config.DELETE_SUCCEED;
+                                    handler.sendMessage(msg);
+                                    urls_set.remove(urls.get(de_position));
+                                }
+                            }
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        } catch (JSONException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                }).start();
+            }
+        });
+        builder.setNegativeButton("取消",null);
+        builder.create();
+        builder.show();
+    }
+
     class myThread implements Runnable{
+        String photo_url;
+        myThread(String photo_url){
+            this.photo_url = photo_url;
+        }
 
         @Override
         public void run() {
-            doGet();
+            doGet(photo_url);
         }
     }
-    public  String doGet(){
-        Log.e(TAG,"doGet");
+    public  String doGet(String get_url){
+        Log.e(TAG,"doGet" + get_url);
         String result = "";
-        String path = "http://nervending.com/exam/10001/photos";
         HttpClient client = new DefaultHttpClient();
-        HttpGet get = new HttpGet(path);
+        HttpGet get = new HttpGet(get_url);
         try {
             HttpResponse response = client.execute(get);
             if (response.getStatusLine().getStatusCode() == 200){
@@ -337,10 +410,16 @@ public class MainActivity extends AppCompatActivity   {
         }
     }
 
+    @Override
+    protected void onStop() {
+        super.onStop();
+        id_list.clear();
+        urls.clear();
+    }
+
     public  void dealJson(String s){
-        List<String> urls = new ArrayList<>();
-        int id = 0;
-        String url = "";
+//        id_list.clear();
+        String child_url = "";
         Message msg = handler.obtainMessage();
         try {
             JSONObject json = new JSONObject(s);
@@ -348,12 +427,28 @@ public class MainActivity extends AppCompatActivity   {
             for (int i = 0; i<array.length();i++){
                 JSONObject jsonObject = new JSONObject(array.get(i).toString());
                 Log.e(TAG,"json = " + jsonObject.get("photo_id"));
-                url = "http://nervending.com/exam/photos/" + jsonObject.get("photo_id") +".jpg";
-                urls.add(url);
+                if (jsonObject.get("deleted") != 1) {
+                    id_set.add((int) jsonObject.get("photo_id"));
+                    Log.e(TAG,"add position = " + jsonObject.get("photo_id"));
+                    child_url = "http://nervending.com/exam/photos/" + jsonObject.get("photo_id") + ".jpg";
+                    urls_set.add(child_url);
+//                    adapter = new MyAdapter(urls);
+                    msg.what = Config.GET_PHOTO;
+                }
             }
-            adapter = new MyAdapter(urls);
-            msg.what = Config.GET_PHOTO;
+                        /*
+                对has_more的处理
+             */
+            if (json.get("has_more") != 0 && isMore){
+                String new_url = url + "?last_update_ts="+ json.get("last_update_ts");
+                new Thread(new myThread(new_url)).start();
+            }
+            if (urls_set.size() == 0){
+                msg.what = Config.HAVE_NO_PHOTO;
+            }
+
             handler.sendMessage(msg);
+
         } catch (JSONException e) {
             e.printStackTrace();
         }
@@ -371,7 +466,27 @@ public class MainActivity extends AppCompatActivity   {
             switch (msg.what){
                 case Config.GET_PHOTO:
                     Log.e(TAG,"handler");
+                    adapter = new MyAdapter(urls_set);
                     lv_photo.setAdapter(adapter);
+                    break;
+                case Config.DELETE_SUCCEED:
+                    adapter.refresh();
+                    Toast.makeText(context,"删除成功",Toast.LENGTH_SHORT).show();
+                    break;
+                case Config.HAVE_NO_PHOTO:
+                    progressDialog.dismiss();
+//                    Toast.makeText(context,"网络相册中没有照片，去上传一些吧",Toast.LENGTH_SHORT).show();
+                    break;
+                case Config.UPLOAD_PHOTO_SUCCESS:
+                    Toast.makeText(context,"上传成功",Toast.LENGTH_SHORT).show();
+                    progressDialog.dismiss();
+                    new Thread(new myThread(url)).start();
+                    break;
+                case Config.LOAD_PHOTO_SUCCESS:
+                    Toast.makeText(context,"获取成功",Toast.LENGTH_SHORT).show();
+                    progressDialog.dismiss();
+//                    id_list.clear();
+//                    urls.clear();
                     break;
             }
         }
@@ -380,6 +495,7 @@ public class MainActivity extends AppCompatActivity   {
     class LoadImageTask extends AsyncTask<String,Void,Bitmap>{
         private View resultView;
         private ImageView imageView;
+        Message msg = new Message();
         LoadImageTask(View resultView,ImageView imageView){
             this.resultView = resultView;
             this.imageView = imageView;
@@ -389,6 +505,8 @@ public class MainActivity extends AppCompatActivity   {
         protected void onPostExecute(Bitmap bitmap) {
             resultView.setTag(bitmap);
             imageView.setImageBitmap(bitmap);
+            msg.what = Config.LOAD_PHOTO_SUCCESS;
+            handler.sendMessage(msg);
         }
 
         @Override
@@ -413,10 +531,12 @@ public class MainActivity extends AppCompatActivity   {
     }
 
     public void uploadPhoto(String bmurl, String filepath){
-            String end ="\r\n";
-            String twoHyphens ="--";
-            String boundary = UUID.randomUUID().toString();
-            File file = new File(filepath);
+        Looper.prepare();
+        Message msg = new Message();
+        String end ="\r\n";
+        String twoHyphens ="--";
+        String boundary = UUID.randomUUID().toString();
+        File file = new File(filepath);
         Log.e(TAG,"filename = " + filepath);
         if (!file.exists()){
                 Toast.makeText(context,"图片不存在",Toast.LENGTH_SHORT).show();
@@ -427,13 +547,10 @@ public class MainActivity extends AppCompatActivity   {
                 HttpURLConnection con=(HttpURLConnection)url.openConnection();
                 con.setReadTimeout(readTimeOut);
                 con.setConnectTimeout(connectTimeOut);
-          /* 允许Input、Output，不使用Cache */
                 con.setDoInput(true);
                 con.setDoOutput(true);
                 con.setUseCaches(false);
-          /* 设置传送的method=POST */
                 con.setRequestMethod("POST");
-          /* setRequestProperty */
                 con.setRequestProperty("Charset", "UTF-8");
                 con.setRequestProperty("Connection", "Keep-Alive");
                 con.setRequestProperty("Content-Type",
@@ -447,28 +564,21 @@ public class MainActivity extends AppCompatActivity   {
                 sb.append("Content-Type:image/pjpeg" + end);
                 sb.append(end);
                 Log.e(TAG,"request" + con.getOutputStream());
-          /* 设置DataOutputStream */
                 DataOutputStream ds =
                         new DataOutputStream(con.getOutputStream());
                ds.write(sb.toString().getBytes());
-          /* 取得文件的FileInputStream */
                 InputStream fStream =new FileInputStream(file);
-          /* 设置每次写入1024bytes */
                 byte[] bytes = new byte[1024];
                 int len = 0;
                 int curLen = 0;
                 while ((len = fStream.read(bytes)) != -1) {
                     curLen += len;
-                    /* 将资料写入DataOutputStream中 */
                     ds.write(bytes, 0, len);
                 }
-          /* 从文件读取数据至缓冲区 */
                 ds.writeBytes(end);
                 ds.writeBytes(twoHyphens + boundary + twoHyphens + end);
-          /* close streams */
                 fStream.close();
                 ds.flush();
-          /* 取得Response内容 */
                 Log.e(TAG,"response code = " + con.getResponseCode());
                 InputStream is = con.getInputStream();
                 int ch;
@@ -477,20 +587,26 @@ public class MainActivity extends AppCompatActivity   {
                 {
                     b.append( (char)ch );
                 }
-                String result = b.toString();
-                Log.e(TAG,"上传成功" + result);
+//                String result = b.toString();
+                Thread.sleep(1000);
+                msg.what = Config.UPLOAD_PHOTO_SUCCESS;
                 ds.close();
+                is.close();
             }
             catch(Exception e)
             {
                 Log.e(TAG,"上传失败" + e);
             }
+        handler.sendMessage(msg);
+        Looper.myLooper().loop();
         }
     class MyAdapter extends BaseAdapter{
-        List<String> list = new ArrayList<>();
-        public MyAdapter(List<String> list){
-            Log.e(TAG,"list = " +list);
-            this.list = list;
+        HashSet<String> set = new HashSet<>();
+        List<String> list =  new ArrayList<>();
+        public MyAdapter(HashSet<String> set){
+            Log.e(TAG,"list = " +set);
+            this.set = set;
+            list.addAll(set);
         }
 
         @Override
@@ -525,13 +641,21 @@ public class MainActivity extends AppCompatActivity   {
             }
 //            holder.im_photo = (ImageView)convertView.findViewById(R.id.im_photo);
 //            holder.im_photo.setImageBitmap(bitmap);
-            holder.im_photo.setScaleType(ImageView.ScaleType.FIT_XY);
+//            holder.im_photo.setScaleType(ImageView.ScaleType.FIT_XY);
             return convertView;
         }
 
         class ViewHolder{
             ImageView im_photo;
         }
+
+        public void refresh(){
+            Log.e(TAG,"change list = " + urls_set);
+            list.clear();
+             list.addAll(urls_set);
+            notifyDataSetChanged();
+        }
+
     }
     }
 
